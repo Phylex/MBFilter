@@ -1,5 +1,5 @@
 [package]
-name = "MBFilter"
+name = "mbfilter"
 version = "0.1.0"
 authors = ["Alexande Becker <becker.alexander42@gmail.com>"]
 edition = "2018"
@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 moessbauer_filter = { path = "../moessbauer_filter" }
 moessbauer_data = { path = "../moessbauer_data" }
+clap = "2.33.3"
