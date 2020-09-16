@@ -6,6 +6,7 @@ use moessbauer_filter::{
     MBFState,
 };
 use std::process::exit;
+use tokio::net::{TCPListener, TcpStream};
 
 fn main() {
     let matches = App::new("Moessbauer Filter")
@@ -75,6 +76,8 @@ fn main() {
                 .required(true)))
         .subcommand(SubCommand::with_name("stop")
             .about("command that stops the measurement. If the filter is not running the command has no effect"))
+        .subcommand(SubCommand::with_name("status")
+            .about("command that returns the current state of the hardware filter with the currently loaded configuration"))
         .get_matches();
 
     if let Some(matches) = matches.subcommand_matches("configure") {
@@ -105,5 +108,11 @@ fn main() {
     if let Some(matches) = matches.subcommand_matches("stop") {
         println!("stop subcommand");
     }
+    if let Some(matches) = matches.subcommand_matches("status") {
+        if let Ok(filter) = MBFilter::new() {
+            let config = filter.configuration();
+            let state = filter.state();
+            println!("{}\nCurrent filter State:\n{}", config, state);
+        }
+    }
 }
-
