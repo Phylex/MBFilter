@@ -1,10 +1,11 @@
-use clap::{Arg, App, SubCommand};
+use clap::{Arg, ArgMatches, App, SubCommand};
 use moessbauer_filter::{
     MBConfig,
     MBFilter,
     MBFError,
     MBFState,
 };
+use std::process::exit;
 
 fn main() {
     let matches = App::new("Moessbauer Filter")
@@ -38,7 +39,7 @@ fn main() {
                 .takes_value(true)
                 .required(true)
                 .index(3))
-            .arg(Arg::with_name("peak threshhold")
+            .arg(Arg::with_name("pthresh")
                 .short("p")
                 .long("pthresh")
                 .value_name("peak threshhold")
@@ -46,7 +47,7 @@ fn main() {
                 .takes_value(true)
                 .required(true)
                 .index(4))
-            .arg(Arg::with_name("dead time")
+            .arg(Arg::with_name("dead-time")
                 .short("d")
                 .long("dtime")
                 .value_name("dead time")
@@ -75,8 +76,28 @@ fn main() {
         .subcommand(SubCommand::with_name("stop")
             .about("command that stops the measurement. If the filter is not running the command has no effect"))
         .get_matches();
+
     if let Some(matches) = matches.subcommand_matches("configure") {
-        println!("We are now in the configure section of the program");
+        if let Ok(filter) = MBFilter::new() {
+            let config = MBConfig::new_from_str(matches.value_of("k").unwrap(),
+                matches.value_of("l").unwrap(),
+                matches.value_of("m").unwrap(),
+                matches.value_of("pthresh").unwrap(),
+                matches.value_of("dead-time").unwrap());
+            match config {
+                Ok(config) => filter.configure(config),
+                Err(MBFError::NoParameters) => exit(1),
+                Err(MBFError::InvalidParameterRange) => {
+                    println!("The given parameters are out of range\nThe valid ranges are:\n\tk [0,128]\n\tl [0, 128]\n\tm [0,2048]");
+                    exit(1);
+                },
+                Err(something) => {
+                    panic!("unknown error: {:?}", something);
+                }
+            }
+        } else {
+            println!("The memmory map failed, there may be another instance of this program running");
+        }
     }
     if let Some(matches) = matches.subcommand_matches("start") {
         println!("start subcommand");
@@ -85,3 +106,4 @@ fn main() {
         println!("stop subcommand");
     }
 }
+
