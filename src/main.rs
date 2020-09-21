@@ -1,16 +1,19 @@
-use clap::{Arg, ArgMatches, App, SubCommand};
+use clap::{Arg, App, SubCommand};
+use std::error::Error;
 use moessbauer_filter::{
     MBConfig,
     MBFilter,
-    MBFError,
     MBFState,
 };
-use std::io::prelude::*;
 use std::fs::File;
+use std::io::{
+    BufWriter,
+    Write,
+};
 use std::path::Path;
-use std::process::exit;
+use mbfilter::MBError;
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let matches = App::new("Moessbauer Filter")
         .version("0.1")
         .author("Alexander Becker <nabla.becker@mailbox.org>")
@@ -88,82 +91,44 @@ fn main() {
 
     // configure subcommand
     if let Some(matches) = matches.subcommand_matches("configure") {
-        if let Ok(filter) = MBFilter::new() {
-            let config = MBConfig::new_from_str(matches.value_of("k").unwrap(),
-                matches.value_of("l").unwrap(),
-                matches.value_of("m").unwrap(),
-                matches.value_of("pthresh").unwrap(),
-                matches.value_of("dead-time").unwrap());
-            match config {
-                Ok(config) => filter.configure(config),
-                Err(MBFError::NoParameters) => exit(1),
-                Err(MBFError::InvalidParameterRange) => {
-                    println!("The given parameters are out of range\nThe valid ranges are:\n\tk [0,128]\n\tl [0, 128]\n\tm [0,2048]");
-                    exit(1);
-                },
-                Err(something) => {
-                    panic!("unknown error: {:?}", something);
-                }
-            }
-        } else {
-            println!("The memmory map failed, there may be another instance of this program running");
-        }
+        let filter = MBFilter::new()?;
+        let config = MBConfig::new_from_str(
+                    matches.value_of("k").unwrap(), 
+                    matches.value_of("l").unwrap(),
+                    matches.value_of("m").unwrap(),
+                    matches.value_of("pthresh").unwrap(),
+                    matches.value_of("dead-time").unwrap())?;
+        filter.configure(config);
+        ()
     }
 
     // start subcommand
     if let Some(matches) = matches.subcommand_matches("start") {
-        if let Ok(mut filter) = MBFilter::new() {
-            let requested_pc = match u64::from_str_radix(matches.value_of("peakcount").unwrap(), 10) {
-                Ok(val) => val,
-                Err(_) => {
-                    println!("the value for the peakcount has to be a natural number");
-                    exit(1)
-                },
-            };
-            if let Some(filepath) = matches.value_of("output file") {
-                let path = Path::new(filepath);
-                let mut ofile = match File::create(&path) {
-                    Err(why) => panic!("could not create {}: {}", path.display(), why),
-                    Ok(file) => file,
-                };
-                let mut fc: u64 = 0;
-                match filter.state() {
-                    MBFState::Ready => {
-                        filter.start();
-                        let mut buffer: [u8; 12*2048] = [0; 12*2048];
-                        while fc < requested_pc {
-                            let bytes_read = match filter.read(&mut buffer) {
-                                Ok(val) => val,
-                                Err(e) => {
-                                    panic!("Error encountered: {}",e);
-                                },
-                            };
-                            let mut pos = 0;
-                            while pos < (&buffer[..bytes_read]).len() {
-                                let bytes_written = ofile.write(&buffer[pos..]).unwrap();
-                                pos += bytes_written;
-                            }
-                            match ofile.write(&buffer[..bytes_read]) {
-                                Ok(val) => {
-                                    if val != bytes_read {
-                                        panic!("Could not write all the to the file");
-                                    }
-                                },
-                                Err(e) => {
-                                    panic!("The Error {} occured while writing to the file", e);
-                                }
-                            };
-                            fc += bytes_read as u64;
-                        }
-                    },
-                    _ => {
-                        println!("The filter is in wrong state please check the state via the state subcommand");
-                        exit(1);
-                    }
-                };
-            }
-        } else {
-            println!("The memmory map failed, there may be another instance of this program running");
+        let mut filter = MBFilter::new()?;
+        let requested_pc = u64::from_str_radix(matches.value_of("peakcount").unwrap(), 10)?;
+        let filepath = matches.value_of("output file").unwrap();
+        let path = Path::new(filepath);
+        let ofile = File::create(&path)?;
+        let mut ofile = BufWriter::new(ofile);
+        let mut fc: u64 = 0;
+        match filter.state() {
+            MBFState::Ready => {
+                filter.start();
+                let mut buffer: [u8; 12*2048] = [0; 12*2048];
+                while fc < requested_pc {
+                    let bytes_read = match filter.read(&mut buffer) {
+                        Ok(val) => val,
+                        Err(e) => return Err(Box::new(MBError::FilterError(e))),
+                    };
+                    let mut pos = 0;
+                    while pos < (&buffer[..bytes_read]).len() {
+                        let bytes_written = ofile.write(&buffer[pos..])?;
+                        pos += bytes_written;
+                    };
+                    fc += bytes_read as u64;
+                }
+            },
+            _ => return Err(Box::new(MBError::WrongState)),
         }
     }
 
@@ -180,4 +145,5 @@ fn main() {
             println!("{}\nCurrent filter State:\n{}", config, state);
         }
     }
+    Ok(())
 }
