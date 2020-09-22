@@ -115,12 +115,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         match filter.state() {
             MBFState::Ready => {
                 filter.start();
+                println!("filter started");
                 let mut buffer: [u8; 12*2048] = [0; 12*2048];
                 while fc < requested_pc {
-                    let bytes_read = match filter.read(&mut buffer) {
-                        Ok(val) => val,
-                        Err(e) => return Err(Box::new(MBError::FilterError(e))),
-                    };
+                    let bytes_read = filter.read(&mut buffer)?;
+                    println!("{} bytes read", bytes_read);
                     let mut pos = 0;
                     while pos < (&buffer[..bytes_read]).len() {
                         let bytes_written = ofile.write(&buffer[pos..])?;
@@ -128,6 +127,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     };
                     fc += bytes_read as u64;
                 }
+                filter.stop();
             },
             _ => return Err(Box::new(MBError::WrongState)),
         }
