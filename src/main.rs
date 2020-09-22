@@ -84,7 +84,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .long("target-file-size")
                 .help("The file size that should be collected before the measurement is automatically stopped")
                 .takes_value(true)
-                .required(true)))
+                .required(true)
+                .index(2)))
         .subcommand(SubCommand::with_name("status")
             .about("command that returns the current state of the hardware filter with the currently loaded configuration"))
         .get_matches();
