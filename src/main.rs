@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Some(matches) = matches.subcommand_matches("configure") {
         let filter = MBFilter::new()?;
         let config = MBConfig::new_from_str(
-                    matches.value_of("k").unwrap(), 
+                    matches.value_of("k").unwrap(),
                     matches.value_of("l").unwrap(),
                     matches.value_of("m").unwrap(),
                     matches.value_of("pthresh").unwrap(),
@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // start subcommand
     if let Some(matches) = matches.subcommand_matches("start") {
         let mut filter = MBFilter::new()?;
-        let requested_pc = u64::from_str_radix(matches.value_of("peakcount").unwrap(), 10)?;
+        let requested_pc = u64::from_str_radix(matches.value_of("target file size").unwrap(), 10)?;
         let filepath = matches.value_of("output file").unwrap();
         let path = Path::new(filepath);
         let ofile = File::create(&path)?;
