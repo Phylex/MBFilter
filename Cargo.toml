@@ -10,3 +10,10 @@ edition = "2018"
 moessbauer_filter = { path = "../moessbauer_filter" }
 moessbauer_data = { path = "../moessbauer_data" }
 clap = "2.33.3"
+log = "0.4.11"
+env_logger = "0.7.1"
+warp = "0.2.5"
+tokio = { version = "0.2.22", features = ["rt-threaded", "macros"]}
+anyhow = "1.0.32"
+serde = { version = "1.0.116", features = ["derive"]}
+futures-util = "0.3.5"

@@ -1,10 +1,12 @@
 use clap::{Arg, App, SubCommand};
-use std::error::Error;
+use std::sync::Mutex;
+use std::sync::Arc;
 use moessbauer_filter::{
     MBConfig,
     MBFilter,
     MBFState,
 };
+use std::error::Error;
 use std::fs::File;
 use std::io::{
     BufWriter,
@@ -12,8 +14,24 @@ use std::io::{
 };
 use std::path::Path;
 use mbfilter::MBError;
+use log::{
+    info,
+    debug,
+    error,
+};
+use warp::Filter;
+use futures_util::stream::StreamExt;
+use futures_util::FutureExt;
+use futures_util::SinkExt;
+use warp::http;
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+
+    // initiate logger
+    env_logger::init();
+
+    // parse the command line
     let matches = App::new("Moessbauer Filter")
         .version("0.1")
         .author("Alexander Becker <nabla.becker@mailbox.org>")
@@ -63,12 +81,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .index(5)))
         .subcommand(SubCommand::with_name("server")
             .about("Turn the control program into a server that opens a specified port and waits for client connections")
-            .arg(Arg::with_name("port")
-                .short("p")
-                .long("port")
-                .value_name("port")
-                .help("The port that the server should listen on")
-                .takes_value(true)))
+            .arg(Arg::with_name("listen")
+                .short("l")
+                .long("listen")
+                .value_name("listen")
+                .help("the IP address and port that the server should listen on")
+                .takes_value(true)
+                .required(true)
+                .index(1)))
         .subcommand(SubCommand::with_name("start")
             .about("command that starts the measurement. The filter has to be configured to be able to start")
             .arg(Arg::with_name("output file")
@@ -88,6 +108,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .index(2)))
         .subcommand(SubCommand::with_name("status")
             .about("command that returns the current state of the hardware filter with the currently loaded configuration"))
+        .subcommand(SubCommand::with_name("stop")
+            .about("stops the filter if it is running"))
         .get_matches();
 
     // configure subcommand
@@ -118,7 +140,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut buffer: [u8; 12*2048] = [0; 12*2048];
                 while fc < requested_pc {
                     let bytes_read = filter.read(&mut buffer)?;
-                    println!("{} bytes read", bytes_read);
+                    debug!("{} bytes read", bytes_read);
                     let mut pos = 0;
                     while pos < (&buffer[..bytes_read]).len() {
                         let bytes_written = ofile.write(&buffer[pos..bytes_read])?;
@@ -128,13 +150,30 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 filter.stop();
             },
-            _ => return Err(Box::new(MBError::WrongState)),
+            _ => Err(MBError::WrongState)?,
         }
     }
 
+    // server subcommand
+    if let Some(matches) = matches.subcommand_matches("server") {
+        let filter = Arc::new(Mutex::new(MBFilter::new()?));
+        let socket_address: std::net::SocketAddr = matches.value_of("listen").unwrap().parse()?;
+        let hello = warp::path("websocket")
+            .and(warp::query::query())
+            .and(warp::ws())
+            .map(move |config, ws| {
+                ws_handler(filter.clone(), config, ws);
+                ""
+            });
+        warp::serve(hello)
+            .run(socket_address)
+            .await;
+    }
+
+
     // stop subcommand
     if let Some(_) = matches.subcommand_matches("stop") {
-        println!("stop subcommand");
+        unimplemented!("stop subcommand")
     }
 
     // status subcommand
@@ -146,4 +185,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: warp::ws::Ws) {
+}
+
+
+async fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> dyn warp::Reply {
+    let config = match config.validate() {
+        Ok(config) => config,
+        Err(e) => panic!("AAAAH"),
+    };
+    let mut locked_filter = filter.try_lock();
+    if let Ok(ref mut unlocked_filter) = locked_filter {
+        match unlocked_filter.state() {
+            MBFState::Ready | MBFState::InvalidParameters => {
+                unlocked_filter.configure(config);
+                //TODO: do websocket things
+                //tokio::task::spawn(read_task(filter.clone(), ws));
+            },
+            _ => panic!("bbb"),//return warp::reply::with_status(format!("Filter already running"), http::status::StatusCode::TERMPORARILY_UNAVAILABLE),
+        }
+    }
 }
