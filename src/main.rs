@@ -220,10 +220,10 @@ async fn validate_config(config: MBConfig) -> Result<MBConfig, warp::reject::Rej
 async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSocket>>) -> Result<(),()> {
     let mut ws = ws.lock().await;
     let mut filter = filter.lock().await;
-    let mut buffer: Vec<u8> = Vec::with_capacity(2048*12);
-    let count = filter.read(&mut buffer).map_err(|_|())?;
-    debug!("{} frames in buffer", count);
-    ws.send(warp::ws::Message::binary(buffer)).await.map_err(|_| ())?;
+    let mut buffer: [u8;2048*12] = [0; 2048*12];
+    let count = filter.read(&mut buffer[..]).map_err(|_|())?;
+    debug!("{} bytes in buffer", count);
+    ws.send(warp::ws::Message::binary(&buffer[..])).await.map_err(|_| ())?;
     Ok(())
 }
 
@@ -244,6 +244,7 @@ async fn clean_up(filter: Arc<Mutex<MBFilter>>) {
         },
         MBFState::Halted => {
             let mut buffer: [u8;2048*12] = [0; 2048*12];
+            locked_filter.stop();
             let count = locked_filter.read(&mut buffer).unwrap();
             if count != 2048*12 {
                 panic!("filter in weird state, only read {} bytes, should have read {} bytes", count, 2048*12);
