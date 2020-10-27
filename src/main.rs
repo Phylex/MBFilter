@@ -1,5 +1,5 @@
 use clap::{Arg, App, SubCommand};
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 use std::sync::Arc;
 use moessbauer_filter::{
     MBConfig,
@@ -215,15 +215,19 @@ async fn validate_config(config: MBConfig) -> Result<MBConfig, warp::reject::Rej
 }
 
 async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSocket>>) -> Result<(),()> {
-    let mut ws = ws.lock().await;
-    ws.send(warp::ws::Message::text("Hello")).await.map_err(|_|())?;
+    let mut ws = ws.lock().unwrap();
+    ws.send(warp::ws::Message::text("Hello"));
     Ok(())
 }
 
 
 fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> impl warp::Reply {
+    {
+        let locked_filter = filter.lock().unwrap();
+        locked_filter.configure(config);
+    }
     ws.on_upgrade(move |websocket| {
-        async {
+        async move {
             let websocket = Arc::new(Mutex::new(websocket));
             loop {
                 if let Err(_) = read_task(filter.clone(), websocket.clone()).await {
