@@ -25,6 +25,11 @@ use futures_util::FutureExt;
 use futures_util::SinkExt;
 use warp::http;
 
+#[derive(Debug)]
+struct MBHTTPError(&'static str);
+
+impl warp::reject::Reject for MBHTTPError {}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
@@ -154,22 +159,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     }
 
-    // server subcommand
-    if let Some(matches) = matches.subcommand_matches("server") {
-        let filter = Arc::new(Mutex::new(MBFilter::new()?));
-        let socket_address: std::net::SocketAddr = matches.value_of("listen").unwrap().parse()?;
-        let hello = warp::path("websocket")
-            .and(warp::query::query())
-            .and(warp::ws())
-            .map(move |config, ws| {
-                ws_handler(filter.clone(), config, ws);
-                ""
-            });
-        warp::serve(hello)
-            .run(socket_address)
-            .await;
-    }
-
 
     // stop subcommand
     if let Some(_) = matches.subcommand_matches("stop") {
@@ -184,27 +173,54 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             println!("{}\nCurrent filter State:\n{}", config, state);
         }
     }
+
+    // server subcommand
+    if let Some(matches) = matches.subcommand_matches("server") {
+        let filter = Arc::new(Mutex::new(MBFilter::new()?));
+        let state_check_filter_copy = filter.clone();
+        let socket_address: std::net::SocketAddr = matches.value_of("listen").unwrap().parse()?;
+        let route = warp::path("websocket")
+            .and(warp::query::query())
+            .and_then(validate_config)
+            .and_then(move |config| check_filter_state(config, state_check_filter_copy.clone()))
+            .and(warp::ws())
+            .map(move |config, ws| {
+                ws_handler(filter.clone(), config, ws)
+            });
+        warp::serve(route)
+            .run(socket_address)
+            .await;
+    }
     Ok(())
 }
 
-async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: warp::ws::Ws) {
+async fn check_filter_state(config: MBConfig, filter: Arc<Mutex<MBFilter>>) -> Result<MBConfig, warp::reject::Rejection> {
+    if let Ok(ref mut unlocked_filter) = filter.try_lock() {
+        match unlocked_filter.state() {
+            MBFState::Ready | MBFState::InvalidParameters => {
+                unlocked_filter.configure(config.clone());
+                return Ok(config)
+            },
+            _ => return Err(warp::reject::custom(MBHTTPError("Filter already running"))),
+        }
+    }
+    return Err(warp::reject::custom(MBHTTPError("Filter already running")));
+}
+
+async fn validate_config(config: MBConfig) -> Result<MBConfig, warp::reject::Rejection> {
+    match config.validate() {
+        Ok(config) => Ok(config),
+        Err(e) => Err(warp::reject::custom(MBHTTPError("Invalid Config"))),
+    }
+}
+
+async fn read_task(filter: Arc<Mutex<MBFilter>>, mut ws: warp::ws::WebSocket) {
+    ws.send(warp::ws::Message::text("Hello")).await;
 }
 
 
-async fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> dyn warp::Reply {
-    let config = match config.validate() {
-        Ok(config) => config,
-        Err(e) => panic!("AAAAH"),
-    };
-    let mut locked_filter = filter.try_lock();
-    if let Ok(ref mut unlocked_filter) = locked_filter {
-        match unlocked_filter.state() {
-            MBFState::Ready | MBFState::InvalidParameters => {
-                unlocked_filter.configure(config);
-                //TODO: do websocket things
-                //tokio::task::spawn(read_task(filter.clone(), ws));
-            },
-            _ => panic!("bbb"),//return warp::reply::with_status(format!("Filter already running"), http::status::StatusCode::TERMPORARILY_UNAVAILABLE),
-        }
-    }
+fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> impl warp::Reply {
+    ws.on_upgrade(move |websocket| {
+        read_task(filter.clone(), websocket)
+    })
 }
