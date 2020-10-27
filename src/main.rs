@@ -232,8 +232,11 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
     ws.on_upgrade(move |websocket| {
         async move {
             {
-                let locked_filter = filter.lock().await;
+                let mut locked_filter = filter.lock().await;
                 locked_filter.configure(config);
+                let filter_config = locked_filter.configuration();
+                debug!("Configuration loaded into the filter: {}", filter_config);
+                locked_filter.start();
             }
             let websocket = Arc::new(Mutex::new(websocket));
             loop {
