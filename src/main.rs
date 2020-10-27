@@ -227,6 +227,30 @@ async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSock
     Ok(())
 }
 
+async fn clean_up(filter: Arc<Mutex<MBFilter>>) {
+    let mut locked_filter = filter.lock().await;
+    debug!("filter lock aquired for cleanup operations");
+    match locked_filter.state() {
+        MBFState::InvalidParameters => {},
+        MBFState::FIFOFull{frame_count} => {
+            let mut buffer: [u8;2048*12] = [0; 2048*12];
+            locked_filter.read(&mut buffer).unwrap();
+        },
+        MBFState::Ready => {},
+        MBFState::Running{frame_count} => {
+            locked_filter.stop();
+            let mut buffer: [u8;2048*12] = [0; 2048*12];
+            locked_filter.read(&mut buffer).unwrap();
+        },
+        MBFState::Halted => {
+            let mut buffer: [u8;2048*12] = [0; 2048*12];
+            let count = locked_filter.read(&mut buffer).unwrap();
+            if count != 2048*12 {
+                panic!("filter in weird state, only read {} bytes, should have read {} bytes", count, 2048*12);
+            }
+        },
+    }
+}
 
 fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> impl warp::Reply {
     ws.on_upgrade(move |websocket| {
@@ -241,6 +265,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             let websocket = Arc::new(Mutex::new(websocket));
             loop {
                 if let Err(_) = read_task(filter.clone(), websocket.clone()).await {
+                    clean_up(filter.clone()).await;
                     break;
                 }
             }
