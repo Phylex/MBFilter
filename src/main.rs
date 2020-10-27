@@ -6,6 +6,9 @@ use moessbauer_filter::{
     MBFilter,
     MBFState,
 };
+use moessbauer_data::{
+    MeasuredPeak,
+};
 use std::error::Error;
 use std::fs::File;
 use std::io::{
@@ -216,7 +219,10 @@ async fn validate_config(config: MBConfig) -> Result<MBConfig, warp::reject::Rej
 
 async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSocket>>) -> Result<(),()> {
     let mut ws = ws.lock().await;
-    ws.send(warp::ws::Message::text("Hello")).await.map_err(|_| ())?;
+    let mut filter = filter.lock().await;
+    let mut buffer: Vec<u8> = Vec::with_capacity(2048*12);
+    filter.read(&mut buffer).map_err(|_|())?;
+    ws.send(warp::ws::Message::binary(buffer)).await.map_err(|_| ())?;
     Ok(())
 }
 
