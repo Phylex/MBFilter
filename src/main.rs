@@ -221,10 +221,17 @@ async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSock
     let mut ws = ws.lock().await;
     let mut filter = filter.lock().await;
     let mut buffer: [u8;2048*12] = [0; 2048*12];
-    let count = filter.read(&mut buffer[..]).map_err(|_|())?;
-    debug!("{} bytes in buffer", count);
-    ws.send(warp::ws::Message::binary(&buffer[..])).await.map_err(|_| ())?;
-    Ok(())
+    match filter.read(&mut buffer[..]) {
+        Err(e) => {
+            debug!("Error from filter encountered: {}", e);
+            Err(())
+        },
+        Ok(count) => {
+            debug!("{} bytes in buffer", count);
+            ws.send(warp::ws::Message::binary(&buffer[..])).await.map_err(|_| ())?;
+            Ok(())
+        },
+    }
 }
 
 async fn clean_up(filter: Arc<Mutex<MBFilter>>) {
