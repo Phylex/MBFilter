@@ -268,6 +268,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                 locked_filter.configure(config);
                 let filter_config = locked_filter.configuration();
                 debug!("Configuration loaded into the filter: {}", filter_config);
+                debug!("Current filter state: {}", locked_filter.state());
                 locked_filter.start();
             }
             let websocket = Arc::new(Mutex::new(websocket));
