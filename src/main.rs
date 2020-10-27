@@ -221,7 +221,8 @@ async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSock
     let mut ws = ws.lock().await;
     let mut filter = filter.lock().await;
     let mut buffer: Vec<u8> = Vec::with_capacity(2048*12);
-    filter.read(&mut buffer).map_err(|_|())?;
+    let count = filter.read(&mut buffer).map_err(|_|())?;
+    debug!("{} frames in buffer", count);
     ws.send(warp::ws::Message::binary(buffer)).await.map_err(|_| ())?;
     Ok(())
 }
