@@ -266,6 +266,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             let websocket = Arc::new(Mutex::new(websocket));
             loop {
                 if let Err(_) = read_task(filter.clone(), websocket.clone()).await {
+                    debug!("encountered ws Error");
                     clean_up(filter.clone()).await;
                     break;
                 }
