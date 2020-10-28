@@ -23,10 +23,8 @@ use log::{
     error,
 };
 use warp::Filter;
-use futures_util::stream::StreamExt;
-use futures_util::FutureExt;
 use futures_util::SinkExt;
-use warp::http;
+use hex;
 
 #[derive(Debug)]
 struct MBHTTPError(&'static str);
@@ -202,6 +200,11 @@ async fn check_filter_state(config: MBConfig, filter: Arc<Mutex<MBFilter>>) -> R
         match unlocked_filter.state() {
             MBFState::Ready | MBFState::InvalidParameters => {
                 unlocked_filter.configure(config.clone());
+                debug!("State of the filter after configuration: {}", unlocked_filter.state());
+                let read_config = unlocked_filter.configuration();
+                if read_config != config {
+                    panic!("Filter configs don't match: {}\n{}", config, read_config);
+                }
                 return Ok(config)
             },
             _ => return Err(warp::reject::custom(MBHTTPError("Filter already running"))),
@@ -213,7 +216,7 @@ async fn check_filter_state(config: MBConfig, filter: Arc<Mutex<MBFilter>>) -> R
 async fn validate_config(config: MBConfig) -> Result<MBConfig, warp::reject::Rejection> {
     match config.validate() {
         Ok(config) => Ok(config),
-        Err(e) => Err(warp::reject::custom(MBHTTPError("Invalid Config"))),
+        Err(_) => Err(warp::reject::custom(MBHTTPError("Invalid Config"))),
     }
 }
 
@@ -228,7 +231,13 @@ async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSock
         },
         Ok(count) => {
             debug!("{} bytes in buffer", count);
-            ws.send(warp::ws::Message::binary(&buffer[..])).await.map_err(|_| ())?;
+            if count%12 == 0 {
+                for i in 1..count/12 {
+                    ws.send(warp::ws::Message::text(format!("{}\n",hex::encode(&buffer[(i-1)*12..i*12])))).await.map_err(|_| ())?;
+                }
+            } else {
+                panic!("Strange amount of bytes in the read buffer");
+            }
             Ok(())
         },
     }
@@ -239,12 +248,12 @@ async fn clean_up(filter: Arc<Mutex<MBFilter>>) {
     debug!("filter lock aquired for cleanup operations");
     match locked_filter.state() {
         MBFState::InvalidParameters => {},
-        MBFState::FIFOFull{frame_count} => {
+        MBFState::FIFOFull{frame_count: _} => {
             let mut buffer: [u8;2048*12] = [0; 2048*12];
             locked_filter.read(&mut buffer).unwrap();
         },
         MBFState::Ready => {},
-        MBFState::Running{frame_count} => {
+        MBFState::Running{frame_count: _} => {
             locked_filter.stop();
             let mut buffer: [u8;2048*12] = [0; 2048*12];
             locked_filter.read(&mut buffer).unwrap();
@@ -265,10 +274,11 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
         async move {
             {
                 let mut locked_filter = filter.lock().await;
+                debug!("the configuration from the web request {}", config);
                 locked_filter.configure(config);
+                debug!("Current filter state: {}", locked_filter.state());
                 let filter_config = locked_filter.configuration();
                 debug!("Configuration loaded into the filter: {}", filter_config);
-                debug!("Current filter state: {}", locked_filter.state());
                 locked_filter.start();
             }
             let websocket = Arc::new(Mutex::new(websocket));
