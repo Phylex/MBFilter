@@ -1,10 +1,12 @@
 use clap::{Arg, App, SubCommand};
 use tokio::sync::Mutex;
+use tokio::sync::broadcast;
 use std::sync::Arc;
 use moessbauer_filter::{
     MBConfig,
     MBFilter,
     MBFState,
+    MBFError,
 };
 use moessbauer_data::{
     MeasuredPeak,
@@ -18,18 +20,21 @@ use std::io::{
 use std::path::Path;
 use mbfilter::MBError;
 use log::{
-    info,
     debug,
-    error,
 };
 use warp::Filter;
-use futures_util::SinkExt;
-use hex;
+use futures_util::{
+    SinkExt,
+    StreamExt,
+};
 
 #[derive(Debug)]
 struct MBHTTPError(&'static str);
 
 impl warp::reject::Reject for MBHTTPError {}
+
+type SharedFilter = Arc<Mutex<MBFilter>>;
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -183,7 +188,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         let route = warp::path("websocket")
             .and(warp::query::query())
             .and_then(validate_config)
-            .and_then(move |config| check_filter_state(config, state_check_filter_copy.clone()))
+            .and_then(move |config| check_and_configure_filter(config, state_check_filter_copy.clone()))
             .and(warp::ws())
             .map(move |config, ws| {
                 ws_handler(filter.clone(), config, ws)
@@ -195,24 +200,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-async fn check_filter_state(config: MBConfig, filter: Arc<Mutex<MBFilter>>) -> Result<MBConfig, warp::reject::Rejection> {
-    if let Ok(ref mut unlocked_filter) = filter.try_lock() {
-        match unlocked_filter.state() {
-            MBFState::Ready | MBFState::InvalidParameters => {
-                unlocked_filter.configure(config.clone());
-                debug!("State of the filter after configuration: {}", unlocked_filter.state());
-                let read_config = unlocked_filter.configuration();
-                if read_config != config {
-                    panic!("Filter configs don't match: {}\n{}", config, read_config);
-                }
-                return Ok(config)
-            },
-            _ => return Err(warp::reject::custom(MBHTTPError("Filter already running"))),
-        }
-    }
-    return Err(warp::reject::custom(MBHTTPError("Filter already running")));
-}
-
 async fn validate_config(config: MBConfig) -> Result<MBConfig, warp::reject::Rejection> {
     match config.validate() {
         Ok(config) => Ok(config),
@@ -220,26 +207,99 @@ async fn validate_config(config: MBConfig) -> Result<MBConfig, warp::reject::Rej
     }
 }
 
-async fn read_task(filter: Arc<Mutex<MBFilter>>, ws: Arc<Mutex<warp::ws::WebSocket>>) -> Result<(),()> {
-    let mut ws = ws.lock().await;
-    let mut filter = filter.lock().await;
-    let mut buffer: [u8;2048*12] = [0; 2048*12];
-    match filter.read(&mut buffer[..]) {
-        Err(e) => {
-            debug!("Error from filter encountered: {}", e);
-            Err(())
-        },
-        Ok(count) => {
-            debug!("{} bytes in buffer", count);
-            if count%12 == 0 {
-                for i in 1..count/12 {
-                    ws.send(warp::ws::Message::text(format!("{}\n",hex::encode(&buffer[(i-1)*12..i*12])))).await.map_err(|_| ())?;
+async fn check_and_configure_filter(config: MBConfig, filter: Arc<Mutex<MBFilter>>) -> Result<MBConfig, warp::reject::Rejection> {
+    if let Ok(ref mut unlocked_filter) = filter.try_lock() {
+        match unlocked_filter.state() {
+            MBFState::Ready | MBFState::InvalidParameters => {
+                unlocked_filter.configure(config.clone());
+                let read_config = unlocked_filter.configuration();
+                if read_config != config {
+                    return Err(warp::reject::custom(MBHTTPError("Filter config load error")));
                 }
-            } else {
-                panic!("Strange amount of bytes in the read buffer");
+                return Ok(read_config)
+            },
+            _ => return Err(warp::reject::custom(MBHTTPError("Filter already running"))),
+        }
+    }
+    return Err(warp::reject::custom(MBHTTPError("Filter already running")));
+}
+
+// the ws.on_upgrade gives us the reply we want but we still need to handle the rejections that
+// can occurr before we reach this function that actually replies with a valid HTTP response
+fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> impl warp::Reply {
+    ws.on_upgrade(|websocket| {
+        async move {
+            {
+                let mut locked_filter = filter.lock().await;
+                locked_filter.start();
             }
-            Ok(())
-        },
+            let (mut wstx, mut wsrx) = websocket.split();
+            let (ctx, mut crx) = broadcast::channel(100);
+            let reader_filter_clone = filter.clone();
+            let control_filter_clone = filter.clone();
+            let filter_result = tokio::spawn(filter_reader_task(reader_filter_clone, ctx));
+            let client_result = tokio::spawn(async move {
+                match crx.recv().await {
+                    Ok(peak) => {
+                        wstx.send(warp::ws::Message::text(peak.to_hex_string())).await.unwrap();
+                        Ok(())
+                    }
+                    Err(e) => {
+                        Err(e)
+                    },
+                }
+            });
+            let control_result = tokio::spawn(async move {
+                while let Some(result) = wsrx.next().await {
+                    match result {
+                        Ok(msg) => {
+                            if msg.is_close() {
+                                let mut locked_filter = control_filter_clone.lock().await;
+                                locked_filter.stop();
+                            }
+                        },
+                        Err(e) => {
+                            let mut locked_filter = control_filter_clone.lock().await;
+                            locked_filter.stop();
+                            eprintln!("websocket receive error: {}", e);
+                        }
+                    };
+                }
+            });
+            control_result.await.unwrap();
+            filter_result.await.unwrap();
+            client_result.await.unwrap();
+        }
+    })
+}
+
+
+async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<MeasuredPeak>) -> Result<(), MBFError> {
+    let mut buffer: [u8;2048*12] = [0;2048*12];
+    let mut count;
+    loop {
+        {
+            let mut filter = filter.lock().await;
+            count = filter.read(&mut buffer[..]);
+        }
+        match count {
+            Ok(count) => {
+                for i in 0..count/12 {
+                    let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
+                    match tx.send(peak) {
+                        Ok(_) => {},
+                        Err(_) => {
+                            clean_up(filter).await;
+                            return Ok(());
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                clean_up(filter).await;
+                return Err(e);
+            },
+        }
     }
 }
 
@@ -261,34 +321,7 @@ async fn clean_up(filter: Arc<Mutex<MBFilter>>) {
         MBFState::Halted => {
             let mut buffer: [u8;2048*12] = [0; 2048*12];
             locked_filter.stop();
-            let count = locked_filter.read(&mut buffer).unwrap();
-            if count != 2048*12 {
-                panic!("filter in weird state, only read {} bytes, should have read {} bytes", count, 2048*12);
-            }
+            let _ = locked_filter.read(&mut buffer).unwrap();
         },
     }
-}
-
-fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> impl warp::Reply {
-    ws.on_upgrade(move |websocket| {
-        async move {
-            {
-                let mut locked_filter = filter.lock().await;
-                debug!("the configuration from the web request {}", config);
-                locked_filter.configure(config);
-                debug!("Current filter state: {}", locked_filter.state());
-                let filter_config = locked_filter.configuration();
-                debug!("Configuration loaded into the filter: {}", filter_config);
-                locked_filter.start();
-            }
-            let websocket = Arc::new(Mutex::new(websocket));
-            loop {
-                if let Err(_) = read_task(filter.clone(), websocket.clone()).await {
-                    debug!("encountered ws Error");
-                    clean_up(filter.clone()).await;
-                    break;
-                }
-            }
-        }
-    })
 }

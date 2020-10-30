@@ -1,5 +1,5 @@
 [package]
-name = "mbfilter"
+
 version = "0.1.0"
 authors = ["Alexande Becker <becker.alexander42@gmail.com>"]
 edition = "2018"
@@ -17,3 +17,4 @@ tokio = { version = "0.2.22", features = ["rt-threaded", "macros"]}
 anyhow = "1.0.32"
 serde = { version = "1.0.116", features = ["derive"]}
 futures-util = "0.3.5"
+futures = "0.3.7"
