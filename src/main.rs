@@ -244,8 +244,8 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                         Ok(peak) => {
                             wstx.send(warp::ws::Message::text(peak.to_hex_string())).await.unwrap();
                         }
-                        Err(e) => {
-                            return Err(e)
+                        Err(_) => {
+                            break;
                         },
                     }
                 }
