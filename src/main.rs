@@ -239,14 +239,15 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             let control_filter_clone = filter.clone();
             let filter_result = tokio::spawn(filter_reader_task(reader_filter_clone, ctx));
             let client_result = tokio::spawn(async move {
-                match crx.recv().await {
-                    Ok(peak) => {
-                        wstx.send(warp::ws::Message::text(peak.to_hex_string())).await.unwrap();
-                        Ok(())
+                loop {
+                    match crx.recv().await {
+                        Ok(peak) => {
+                            wstx.send(warp::ws::Message::text(peak.to_hex_string())).await.unwrap();
+                        }
+                        Err(e) => {
+                            return Err(e)
+                        },
                     }
-                    Err(e) => {
-                        Err(e)
-                    },
                 }
             });
             let control_result = tokio::spawn(async move {
