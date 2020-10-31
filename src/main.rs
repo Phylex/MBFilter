@@ -226,7 +226,7 @@ async fn check_and_configure_filter(config: MBConfig, filter: Arc<Mutex<MBFilter
 
 // the ws.on_upgrade gives us the reply we want but we still need to handle the rejections that
 // can occurr before we reach this function that actually replies with a valid HTTP response
-fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) -> impl warp::Reply {
+fn ws_handler(filter: Arc<Mutex<MBFilter>>, _config: MBConfig, ws: warp::ws::Ws) -> impl warp::Reply {
     ws.on_upgrade(|websocket| {
         async move {
             {
@@ -255,7 +255,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                                     Ok(_) => {},
                                     Err(e) => {
                                         debug!("Error encountered writing to the websocket: {:?}", e);
-                                        clean_up(filter).await;
+                                        clean_up(reader_filter_clone.clone()).await;
                                         break;
                                     }
                                 }
@@ -263,7 +263,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                         },
                         Err(e) => {
                             debug!("Error encountered reading filter: {}", e);
-                            clean_up(filter).await;
+                            clean_up(reader_filter_clone.clone()).await;
                             break;
                         },
                     }
@@ -293,10 +293,6 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             });
         }
     })
-}
-
-
-async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<MeasuredPeak>) -> Result<(), MBFError> {
 }
 
 async fn clean_up(filter: Arc<Mutex<MBFilter>>) {
