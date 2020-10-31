@@ -251,7 +251,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, _config: MBConfig, ws: warp::ws::Ws)
                             debug!("read {} bytes", count);
                             for i in 0..count/12 {
                                 let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
-                                match wstx.send(warp::ws::Message::text(peak.to_hex_string())).await {
+                                match wstx.send(warp::ws::Message::text(format!("{}\n", peak.to_hex_string()))).await {
                                     Ok(_) => {},
                                     Err(e) => {
                                         debug!("Error encountered writing to the websocket: {:?}", e);
@@ -280,13 +280,14 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, _config: MBConfig, ws: warp::ws::Ws)
                                 let mut locked_filter = control_filter_clone.lock().await;
                                 debug!("Stopping filter");
                                 locked_filter.stop();
+                                break;
                             }
                         },
                         Err(e) => {
                             debug!("Error reading from the websocket: {:?}", e);
+                            debug!("Stopping Filter");
                             let mut locked_filter = control_filter_clone.lock().await;
                             locked_filter.stop();
-                            eprintln!("websocket receive error: {}", e);
                         }
                     };
                 }
