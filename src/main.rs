@@ -242,11 +242,15 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             // the task to send the data to the websocket
             tokio::spawn(async move {
                 loop {
+                    debug!("started the sender task");
                     match crx.recv().await {
                         Ok(peak) => {
+                            debug!("received peak, sending");
                             wstx.send(warp::ws::Message::text(peak.to_hex_string())).await.unwrap();
                         }
-                        Err(_) => {
+                        Err(e) => {
+                            debug!("encountered error on the broadcast channel: {:?}", e);
+                            wstx.close().await.map_err(|e| debug!("Encountered Error: {:?} on closing the ws sink", e));
                             break;
                         },
                     }
@@ -259,6 +263,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                         Ok(msg) => {
                             debug!("received message from client: {:?}", msg);
                             if msg.is_close() {
+                                debug!("message says to close the connection -> stop the filter");
                                 let mut locked_filter = control_filter_clone.lock().await;
                                 debug!("Stopping filter");
                                 locked_filter.stop();
@@ -295,7 +300,7 @@ async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<Measured
                     match tx.send(peak) {
                         Ok(_) => {},
                         Err(e) => {
-                            debug!("Error encountered writing to sender: {:?}", e);
+                            debug!("Error encountered writing to sender this implies no receiver: {:?}", e);
                             clean_up(filter).await;
                             return Ok(());
                         }
