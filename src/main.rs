@@ -234,7 +234,6 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                 locked_filter.start();
             }
             let (mut wstx, mut wsrx) = websocket.split();
-            let (ctx, mut crx) = broadcast::channel(2048);
             let reader_filter_clone = filter.clone();
             let control_filter_clone = filter.clone();
             // the task to read a filter
@@ -243,7 +242,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                 let mut count;
                 loop {
                     {
-                        let mut filter = filter.lock().await;
+                        let mut filter = reader_filter_clone.lock().await;
                         debug!("aquired filter lock for reading");
                         count = filter.read(&mut buffer[..]);
                     }
