@@ -238,19 +238,33 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             let reader_filter_clone = filter.clone();
             let control_filter_clone = filter.clone();
             // the task to read a filter
-            tokio::spawn(filter_reader_task(reader_filter_clone, ctx));
-            // the task to send the data to the websocket
             tokio::spawn(async move {
+                let mut buffer: [u8;2048*12] = [0;2048*12];
+                let mut count;
                 loop {
-                    debug!("started the sender task");
-                    match crx.recv().await {
-                        Ok(peak) => {
-                            debug!("received peak, sending");
-                            wstx.send(warp::ws::Message::text(peak.to_hex_string())).await.unwrap();
-                        }
+                    {
+                        let mut filter = filter.lock().await;
+                        debug!("aquired filter lock for reading");
+                        count = filter.read(&mut buffer[..]);
+                    }
+                    match count {
+                        Ok(count) => {
+                            debug!("read {} bytes", count);
+                            for i in 0..count/12 {
+                                let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
+                                match wstx.send(warp::ws::Message::text(peak.to_hex_string())).await {
+                                    Ok(_) => {},
+                                    Err(e) => {
+                                        debug!("Error encountered writing to the websocket: {:?}", e);
+                                        clean_up(filter).await;
+                                        break;
+                                    }
+                                }
+                            }
+                        },
                         Err(e) => {
-                            debug!("encountered error on the broadcast channel: {:?}", e);
-                            wstx.close().await.map_err(|e| debug!("Encountered Error: {:?} on closing the ws sink", e));
+                            debug!("Error encountered reading filter: {}", e);
+                            clean_up(filter).await;
                             break;
                         },
                     }
@@ -284,37 +298,6 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
 
 
 async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<MeasuredPeak>) -> Result<(), MBFError> {
-    let mut buffer: [u8;2048*12] = [0;2048*12];
-    let mut count;
-    loop {
-        {
-            let mut filter = filter.lock().await;
-            debug!("aquired filter lock for reading");
-            count = filter.read(&mut buffer[..]);
-        }
-        match count {
-            Ok(count) => {
-                debug!("read {} bytes", count);
-                for i in 0..count/12 {
-                    let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
-                    debug!("peak read from buffer {}", peak);
-                    match tx.send(peak) {
-                        Ok(_) => {},
-                        Err(e) => {
-                            debug!("Error encountered writing to sender this implies no receiver: {:?}", e);
-                            clean_up(filter).await;
-                            return Ok(());
-                        }
-                    }
-                }
-            },
-            Err(e) => {
-                debug!("Error encountered reading filter: {}", e);
-                clean_up(filter).await;
-                return Err(e);
-            },
-        }
-    }
 }
 
 async fn clean_up(filter: Arc<Mutex<MBFilter>>) {
