@@ -288,7 +288,8 @@ async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<Measured
                     let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
                     match tx.send(peak) {
                         Ok(_) => {},
-                        Err(_) => {
+                        Err(e) => {
+                            debug!("Error encountered reading filter: {:?}", e);
                             clean_up(filter).await;
                             return Ok(());
                         }
@@ -296,6 +297,7 @@ async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<Measured
                 }
             },
             Err(e) => {
+                debug!("Error encountered reading filter: {}", e);
                 clean_up(filter).await;
                 return Err(e);
             },
