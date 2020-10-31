@@ -1,12 +1,10 @@
 use clap::{Arg, App, SubCommand};
 use tokio::sync::Mutex;
-use tokio::sync::broadcast;
 use std::sync::Arc;
 use moessbauer_filter::{
     MBConfig,
     MBFilter,
     MBFState,
-    MBFError,
 };
 use moessbauer_data::{
     MeasuredPeak,
@@ -32,9 +30,6 @@ use futures_util::{
 struct MBHTTPError(&'static str);
 
 impl warp::reject::Reject for MBHTTPError {}
-
-type SharedFilter = Arc<Mutex<MBFilter>>;
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
