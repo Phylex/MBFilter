@@ -237,8 +237,8 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             let (ctx, mut crx) = broadcast::channel(100);
             let reader_filter_clone = filter.clone();
             let control_filter_clone = filter.clone();
-            let filter_result = tokio::spawn(filter_reader_task(reader_filter_clone, ctx));
-            let client_result = tokio::spawn(async move {
+            tokio::spawn(filter_reader_task(reader_filter_clone, ctx));
+            tokio::spawn(async move {
                 loop {
                     match crx.recv().await {
                         Ok(peak) => {
@@ -250,7 +250,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                     }
                 }
             });
-            let control_result = tokio::spawn(async move {
+            tokio::spawn(async move {
                 while let Some(result) = wsrx.next().await {
                     match result {
                         Ok(msg) => {
@@ -267,9 +267,6 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                     };
                 }
             });
-            control_result.await.unwrap();
-            filter_result.await.unwrap();
-            client_result.await.unwrap();
         }
     })
 }
@@ -281,10 +278,12 @@ async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<Measured
     loop {
         {
             let mut filter = filter.lock().await;
+            debug!("aquired filter lock for reading");
             count = filter.read(&mut buffer[..]);
         }
         match count {
             Ok(count) => {
+                debug!("read {} bytes", count);
                 for i in 0..count/12 {
                     let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
                     match tx.send(peak) {
