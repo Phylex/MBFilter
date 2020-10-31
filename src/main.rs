@@ -237,7 +237,9 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
             let (ctx, mut crx) = broadcast::channel(100);
             let reader_filter_clone = filter.clone();
             let control_filter_clone = filter.clone();
+            // the task to read a filter
             tokio::spawn(filter_reader_task(reader_filter_clone, ctx));
+            // the task to send the data to the websocket
             tokio::spawn(async move {
                 loop {
                     match crx.recv().await {
@@ -250,16 +252,20 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                     }
                 }
             });
+            // task that receives the stop command and stops the filter
             tokio::spawn(async move {
                 while let Some(result) = wsrx.next().await {
                     match result {
                         Ok(msg) => {
+                            debug!("received message from client: {:?}", msg);
                             if msg.is_close() {
                                 let mut locked_filter = control_filter_clone.lock().await;
+                                debug!("Stopping filter");
                                 locked_filter.stop();
                             }
                         },
                         Err(e) => {
+                            debug!("Error reading from the websocket: {:?}", e);
                             let mut locked_filter = control_filter_clone.lock().await;
                             locked_filter.stop();
                             eprintln!("websocket receive error: {}", e);
@@ -289,7 +295,7 @@ async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<Measured
                     match tx.send(peak) {
                         Ok(_) => {},
                         Err(e) => {
-                            debug!("Error encountered reading filter: {:?}", e);
+                            debug!("Error encountered writing to sender: {:?}", e);
                             clean_up(filter).await;
                             return Ok(());
                         }
