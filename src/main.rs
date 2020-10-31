@@ -234,7 +234,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, config: MBConfig, ws: warp::ws::Ws) 
                 locked_filter.start();
             }
             let (mut wstx, mut wsrx) = websocket.split();
-            let (ctx, mut crx) = broadcast::channel(100);
+            let (ctx, mut crx) = broadcast::channel(2048);
             let reader_filter_clone = filter.clone();
             let control_filter_clone = filter.clone();
             // the task to read a filter
@@ -297,6 +297,7 @@ async fn filter_reader_task(filter: SharedFilter, tx: broadcast::Sender<Measured
                 debug!("read {} bytes", count);
                 for i in 0..count/12 {
                     let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
+                    debug!("peak read from buffer {}", peak);
                     match tx.send(peak) {
                         Ok(_) => {},
                         Err(e) => {
