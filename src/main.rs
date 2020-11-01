@@ -283,6 +283,7 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, _config: MBConfig, ws: warp::ws::Ws)
                             debug!("Stopping Filter");
                             let mut locked_filter = control_filter_clone.lock().await;
                             locked_filter.stop();
+                            break;
                         }
                     };
                 }
