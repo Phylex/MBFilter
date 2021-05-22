@@ -6,9 +6,9 @@ use moessbauer_filter::{
     MBFilter,
     MBFState,
 };
-use moessbauer_data::{
-    MeasuredPeak,
-};
+//use moessbauer_data::{
+//    MeasuredPeak,
+//};
 use std::error::Error;
 use std::fs::File;
 use std::io::{
@@ -244,9 +244,8 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, _config: MBConfig, ws: warp::ws::Ws)
                     match count {
                         Ok(count) => {
                             debug!("read {} bytes", count);
-                            for i in 0..count/12 {
-                                let peak = MeasuredPeak::new(&buffer[i*12..(i+1)*12]);
-                                match wstx.send(warp::ws::Message::text(format!("{}\n", peak.to_hex_string()))).await {
+                            if count % 12 == 0 {
+                                match wstx.send(warp::ws::Message::binary(&buffer[..count])).await {
                                     Ok(_) => {},
                                     Err(e) => {
                                         debug!("Error encountered writing to the websocket: {:?}", e);
@@ -254,6 +253,10 @@ fn ws_handler(filter: Arc<Mutex<MBFilter>>, _config: MBConfig, ws: warp::ws::Ws)
                                         break;
                                     }
                                 }
+                            } else {
+                                debug!("Did not read a multiple of 12 bytes from filter");
+                                clean_up(reader_filter_clone.clone()).await;
+                                break;
                             }
                         },
                         Err(e) => {
